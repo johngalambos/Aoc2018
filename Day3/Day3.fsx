@@ -76,7 +76,7 @@ let claimsCoords =
   |> Seq.map (fun c -> (c.Id, toCoords c))
 
 let hasNoOverlaps coords tapestry =
-  Seq.forall (fun coord -> (Map.find coord tapestry) = 1)
+  Seq.forall (fun coord -> (Map.find coord tapestry) = 1) coords
 
 
 Seq.find (fun (id, coords) ->  hasNoOverlaps coords tapestry) claimsCoords
