@@ -63,6 +63,7 @@ testCoords
   (fun map (i, cGrid) -> overlayCoordGrid map cGrid i)
   Map.empty
 |> Map.toList
+|> List.sortBy (fun ((x,y), _) -> (y, x))
 |> List.map (fun item ->
   let (c, tv) = item
   match tv with
@@ -73,7 +74,7 @@ testCoords
   | Tie _ ->
     printf "."
   match c with
-  | (_, 9) -> printfn ""
+  | (8, _) -> printfn ""
   | _ -> printf ""
   item)
 |> List.map snd
@@ -81,8 +82,11 @@ testCoords
   match x with
   | Closest _ -> true
   | _ -> false)
-|> List.groupBy (fun (Closest (id, _)) -> id)
+|> List.groupBy (fun (Closest (_, id)) -> id)
 |> List.map (fun (g, closests) -> (g, List.length closests))
+|> List.map (fun x ->
+  printfn "%A" x
+  x)
 |> List.maxBy (fun (g, closestTilesCount) -> closestTilesCount)
 
 
