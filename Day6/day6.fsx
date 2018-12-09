@@ -37,12 +37,12 @@ let createCoordGrid extents (x, y) =
       for j in extents.ymin .. extents.ymax do
         yield
           { coord =  (i, j)
-            dist = abs (x - i) + abs (j - y) } }
+            dist = abs (i - x) + abs (j - y) } }
 
 
 // overlayCoordGrid :: Map<Coord, TileValue> -> (CoordDist) -> Map<Coord, TileValue>
 let overlayCoordGrid map coordGrid coordId =
-  //fold over coordgrid popluting the map
+  //fold over coordgrid populating the map
   Seq.fold
     (fun (grid:Map<Coord, TileValue>) cand ->
       match Map.containsKey cand.coord grid with
@@ -62,7 +62,10 @@ let overlayCoordGrid map coordGrid coordId =
 
 
 
-let lines = System.IO.File.ReadLines(@"C:\Users\bil91\code\Aoc2018\Day6\input.txt")
+let lines = System.IO.File.ReadLines(@"C:\Users\john\code\Aoc2018\Day6\input.txt")
+// let lines = System.IO.File.ReadLines(@"C:\Users\john\code\Aoc2018\Day6\input2.txt")
+// let lines = System.IO.File.ReadLines(@"C:\Users\john\code\Aoc2018\Day6\inputSample.txt")
+
 let coords =
   lines
   |> Seq.map (fun x ->
@@ -75,61 +78,94 @@ let extents = findExtents coords
 // let testCoords = [ (1, 1); (1, 6); (8, 3); (3, 4); (5, 5); (8, 9) ]
 // let extents = findExtents testCoords
 
-coords
-|> List.mapi (fun i c -> (i, (createCoordGrid extents c)))
-|> List.fold
-  (fun map (i, cGrid) -> overlayCoordGrid map cGrid i)
-  Map.empty
-|> Map.toList
-|> List.map snd
-|> List.choose (fun x ->
-  match x with
-  | Closest cc -> Some cc
-  | _ -> None)
-|> List.groupBy (fun cc -> cc.Id)
-|> List.map (fun (id, closests) -> (id, List.length closests))
-|> List.map (fun x ->
-  printfn "%A" x
-  x)
-|> List.maxBy (fun (_, closestTilesCount) -> closestTilesCount)
+let results =
+  coords
+  |> List.mapi (fun i c -> (i, (createCoordGrid extents c)))
+  |> List.fold
+    (fun map (i, cGrid) -> overlayCoordGrid map cGrid i)
+    Map.empty
+
+let finalCoords =
+  results
+  |> Map.toList
+  |> List.map fst
+
+let minX =
+  finalCoords
+  |> List.minBy fst
+  |> fst
+
+let minY =
+  finalCoords
+  |> List.minBy snd
+  |> snd
+
+let maxX =
+  finalCoords
+  |> List.maxBy fst
+  |> fst
+
+let maxY =
+  finalCoords
+  |> List.maxBy snd
+  |> snd
 
 
-//to visualize
-// let testCoords = [ (1, 1); (1, 6); (8, 3); (3, 4); (5, 5); (8, 9) ]
-// let extents = findExtents testCoords
-// let caps = ['A' .. 'F']
-// let lowers = ['a' .. 'f']
 
-// testCoords
-// |> List.mapi (fun i c -> (i, (createCoordGrid extents c)))
-// |> List.fold
-//   (fun map (i, cGrid) -> overlayCoordGrid map cGrid i)
-//   Map.empty
-// |> Map.toList
-// |> List.sortBy (fun ((x,y), _) -> (y, x))
-// |> List.map (fun item ->
-//   let (c, tv) = item
-//   match tv with
-//   | Closest cc  when cc.Dist = 0 ->
-//     printf "%s" (caps.[cc.Id].ToString())
-//   | Closest cc ->
-//     printf "%s" (lowers.[cc.Id].ToString())
-//   | Tie _ ->
-//     printf "."
-//   match c with
-//   | (8, _) -> printfn ""
-//   | _ -> printf ""
-//   item)
-// |> List.map snd
-// |> List.choose (fun x ->
-//   match x with
-//   | Closest cc -> Some cc
-//   | _ -> None)
-// |> List.groupBy (fun cc -> cc.Id)
-// |> List.map (fun (g, closests) -> (g, List.length closests))
-// |> List.map (fun x ->
-//   printfn "%A" x
-//   x)
-// |> List.maxBy (fun (_, closestTilesCount) -> closestTilesCount)
+let edgeAreas =
+  results
+  |> Map.toList
+  |> List.filter (fun ((x, y), item) ->
+    (x = minX || y = minY || x = maxX || y = maxY))
+  |> List.choose (fun (_, item) ->
+    match item with
+    | Closest c -> Some c
+    | _ -> None)
+  |> List.map (fun c -> c.Id)
+  |> List.distinct
 
 
+
+let maxBoundedArea =
+  results
+  |> Map.toList
+  |> List.map snd
+  |> List.choose (fun x ->
+    match x with
+    | Closest cc -> Some cc
+    | _ -> None)
+  |> List.groupBy (fun cc -> cc.Id)
+  |> List.map (fun (id, closests) -> (id, List.length closests))
+  |> List.map (fun x ->
+    printfn "%A" x
+    x)
+  |> List.filter (fun (id, count) -> not (List.contains id edgeAreas))
+  |> List.maxBy (fun (_, closestTilesCount) -> closestTilesCount)
+
+//we can't allow one on the edge
+
+
+let greekCaps = ['Α'; 'Β'; 'Γ'; 'Δ'; 'Ε'; 'Ζ'; 'Η'; 'Θ'; 'Ι'; 'Κ'; 'Λ'; 'Μ'; 'Ν'; 'Ξ'; 'Ο'; 'Π'; 'Ρ'; 'Σ'; 'Τ'; 'Υ'; 'Φ'; 'Χ'; 'Ψ'; 'Ω']
+let greekLowers = ['α'; 'β'; 'γ'; 'δ'; 'ε'; 'ζ'; 'η'; 'θ'; 'ι'; 'κ'; 'λ'; 'μ'; 'ν'; 'ξ'; 'ο'; 'π'; 'ρ'; 'σ'; 'τ'; 'υ'; 'φ'; 'χ'; 'ψ'; 'ω']
+let caps = ['A' .. 'Z'] @ greekCaps
+let lowers = ['a' .. 'z'] @ greekLowers
+
+let toDisplay results =
+  results
+  |> Map.toList
+  |> List.groupBy (fun ((x,y), _) -> y)
+  |> List.sortBy (fun (y, _) -> y)
+  |> List.map (fun (y, lineItems) ->
+    lineItems
+    |> List.map (fun item ->
+      let (c, tv) = item
+      match tv with
+      | Closest cc  when cc.Dist = 0 ->
+        caps.[cc.Id]
+      | Closest cc ->
+        lowers.[cc.Id]
+      | Tie _ -> '.'))
+  |> List.map (fun lineChars ->
+    String.concat "" <| List.map string lineChars)
+
+System.IO.File.WriteAllLines(@"C:\Users\john\code\Aoc2018\Day6\output2.txt", results |> toDisplay)
