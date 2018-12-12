@@ -40,6 +40,12 @@ let sumAreaPower2 (grid: int [,]) s (x, y) =
             yield grid.[y - 1 + y', x - 1 + x'] }
   |> Seq.sum
 
+let sumAreaPower2List (grid: int [,]) s (x, y) =
+  [ for y' in 0..(s - 1) do
+          for x' in 0..(s - 1) do
+            yield grid.[y - 1 + y', x - 1 + x'] ]
+  |> List.sum
+
 let sumAreaPower2Fast (grid: int [,]) s (x, y) =
   let mutable total = 0
 
@@ -49,8 +55,14 @@ let sumAreaPower2Fast (grid: int [,]) s (x, y) =
 
   total
 
+let sumAreaPower2Fold (grid: int [,]) s (x, y) =
+  seq { for y' in 0..(s - 1) do
+          for x' in 0..(s - 1) do
+            yield grid.[y - 1 + y', x - 1 + x'] }
+  |> Seq.fold (fun total s -> total + s) 0
+
 let getMax grid s =
-  printfn "working on %A" s
+  printf "."
   let coords = seq {  for y in 1..(300 - s + 1) do
                         for x in 1..(300 - s + 1) do
                           yield (x, y) }
@@ -58,7 +70,7 @@ let getMax grid s =
   coords
   |> Seq.fold (fun acc (x, y) ->
     let (_, _, prevMax) = acc
-    let sum = sumAreaPower2Fast grid s (x, y)
+    let sum = sumAreaPower2List grid s (x, y)
     if sum > prevMax then
       (x, y, sum)
     else
@@ -69,15 +81,14 @@ let getMaxFast grid s =
   // (x, y, sum)
   let mutable currentMax = (0, 0, 0)
   let mutable prevMax = 0
-  printfn "working on %A" s
+  printf "."
 
   for y in 1..(300 - s + 1) do
     for x in 1..(300 - s + 1) do
-      let sum = sumAreaPower2 grid s (x, y)
+      let sum = sumAreaPower2Fast grid s (x, y)
       if sum > prevMax then
         currentMax <- (x, y, sum)
         prevMax <- sum
-        printfn "new max %A" currentMax
       else
         ()
   currentMax
