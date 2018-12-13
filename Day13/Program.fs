@@ -21,6 +21,7 @@ type VehicleState =
 
 
 let input =
+  // System.IO.File.ReadLines(@"/Users/john/code/Aoc2018/Day13/inputSample2.txt")
   // System.IO.File.ReadLines(@"/Users/john/code/Aoc2018/Day13/inputSample.txt")
   System.IO.File.ReadLines(@"/Users/john/code/Aoc2018/Day13/input.txt")
   |> Seq.toArray
@@ -132,21 +133,37 @@ let rec tick (states: VehicleState list) (grid: GridTile [,]) tickNum =
     vehicles
     |> List.map (fun v -> tickVehicle v grid)
 
-  printfn "tick num %A" tickNum
-  newStates
-  |> Seq.iter (fun s -> printfn "%A" s)
+  // printfn "tick num %A" tickNum
+  // newStates
+  // |> Seq.iter (fun s -> printfn "%A" s)
 
   let groupByLocation =
     newStates
     |> Seq.groupBy (fun s -> s.Location)
 
-  let hasCollision =
-    groupByLocation
-    |> Seq.exists (fun (g, items) -> (Seq.length items) > 1)
+  let collisions =
+    seq { for (g,i) in groupByLocation do
+            if Seq.length i > 1 then
+              yield Seq.length i }
+    |> Seq.sum
 
-  match hasCollision with
-  | true -> groupByLocation |> Seq.filter (fun (g, items) -> (Seq.length items) > 1)
-  | false -> tick newStates grid (tickNum + 1)
+
+  let vehiclesWithNoCollisions =
+    seq { for (g,i) in groupByLocation do
+            if Seq.length i = 1 then
+              yield! i }
+    |> Seq.toList
+
+  if collisions > 1 then
+    printfn "tick %A: %A vehicles collided %A left" tickNum collisions (Seq.length vehiclesWithNoCollisions)
+
+  // printfn "vnc %A" vehiclesWithNoCollisions
+
+
+  match (Seq.length vehiclesWithNoCollisions), tickNum with
+  | 1, _ -> vehiclesWithNoCollisions
+  | _, t when t > 10000 -> vehiclesWithNoCollisions
+  | _ -> tick vehiclesWithNoCollisions grid (tickNum + 1)
 
 
 [<EntryPoint>]
