@@ -121,7 +121,7 @@ let finalResult =
 
 //@ gen 250 sum = 19863 and increase by 75 forever
 let finalResult = (50000000000L - 250L) * 75L + 19863L
-//3750,000,001,113
+//3,750,000,001,113
 
 
 
