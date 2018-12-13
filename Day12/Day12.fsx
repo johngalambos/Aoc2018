@@ -1,14 +1,5 @@
 open System
 
-type PotState = Empty | Full
-
-type Pot =
-  { Id: int
-    State: PotState }
-
-type PotList =
-  { Posts: pot list }
-
 let sampleState = "#..#.#..##......###...###"
 let sampleRules =
   [ "...## => #"
@@ -97,35 +88,40 @@ let applyRules rules pots =
   |> String.concat ""
 
 
-let rules = formatRules sampleRules
-let pots = getPots sampleState
+let rules = formatRules inputRules
+let buffer state  bufferSize =
+  let buf =
+    seq { for i in {0..bufferSize - 1} -> "." }
+    |> String.concat ""
 
-let rec appendEmptyPots (str:string) =
-  if str.[str.Length - 2..] <> ".." then
-    appendEmptyPots (str + ".")
-  else
-    str
+  buf + state + buf
 
-let rec prependEmptyPots (str:string) =
-  if str.[..1] <> ".." then
-    prependEmptyPots ("." + str)
-  else
-    str
 
-let appendPots str =
-  let str = appendEmptyPots str
-  prependEmptyPots str
+let bufferSize = 1000
 
+
+let pots = getPots (buffer initialState bufferSize)
 
 let finalResult =
-  { 1..20 }
-  |> Seq.fold (fun s i ->
+  { 1..300 }
+  |> Seq.fold (fun (s, last) i ->
     let result = applyRules rules s
-    //append empty pots to string if necessary
-    let result = appendPots result
-    printfn "%A | gen %A" result i
+    let sum =
+      Seq.mapi (fun i c ->
+        match c with
+        | '#' -> i - bufferSize
+        | '.' -> 0
+        | _ -> failwith "weird char") result
+      |> Seq.sum
+
+    let diff = sum - last
+    printfn "%A | gen %A| sum indices = %A diff = %A" result i sum diff
     let newPots = getPots result
-    newPots) pots
+    (newPots, sum)) (pots, 0)
+
+//@ gen 250 sum = 19863 and increase by 75 forever
+let finalResult = (50000000000L - 250L) * 75L + 19863L
+//3750,000,001,113
 
 
 
