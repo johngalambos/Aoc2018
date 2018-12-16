@@ -14,34 +14,41 @@ type TileType =  | Wall | Open
 type GameState =
   { Map: TileType[,] }
 
-let isUnoccupied loc  units =
-  not (Seq.exists (fun u -> u.Location = loc) units)
+let isUnoccupied loc units =
+  not (Map.exists (fun i u -> u.Location = loc) units)
 
-let inRangeTiles u gridDist units =
+let isOpenTile (map:TileType[,]) (i, j) units =
+  map.[i,j] = Open && isUnoccupied (i, j) units
+
+let inRangeTiles u map units =
   let enemyLocations =
     units
-    |> Seq.filter (fun u' -> u'.Type <> u.Type)
-    |> Seq.map (fun u -> u.Location)
+    |> Map.filter (fun id u' -> u'.Type <> u.Type)
+    |> Map.toList
+    |> List.map (fun (id, u) -> u.Location)
 
-  let unOccupiedAdjLoc =
-    seq { for el in enemyLocations do
-            let adjLoc =
-              Map.find el gridDist
-              |> Map.filter (fun l d -> d = 1 && isUnoccupied l units)
-              |> Map.toList
-              |> List.map (fun (l,_) -> l)
-            yield! adjLoc }
-  unOccupiedAdjLoc
+  // printfn "enemy locations %A" enemyLocations
+  //all tiles adjacent to a unit that are open and unoccupied
+
+  seq { for (i, j) in enemyLocations do
+          //up
+          if i > 0 && isOpenTile map (i - 1, j) units then
+            yield (i - 1, j)
+          //down
+          if i < Array2D.length1 map - 1 && isOpenTile map (i + 1, j) units then
+            yield (i + 1, j)
+          //left
+          if j > 0 && isOpenTile map (i, j - 1) units then
+            yield (i, j - 1)
+          //right
+          if j < Array2D.length2 map - 1  && isOpenTile map (i, j + 1) units then
+            yield (i, j + 1) }
+  |> Seq.distinct
 
 
-// let tickUnit u =
-  ////find the nearest opponent
-  ////try to move towards it
-  ////attack if possible
-//let tick grid locations
 
 
-let genMap input: string list) =
+let genMap (input: string list) =
   let height = Seq.length input
   let width = Seq.length (input.[0])
   Array2D.init height width (fun i j ->
@@ -59,49 +66,40 @@ let genUnits (input: string list) =
             | 'G' -> yield (Goblin, (i, j))
             | _ -> () }
   |> Seq.mapi (fun i (u, l) ->
-    { Id = i
-      HP = 200
-      Attack = 3
-      Location = l
-      Type = u })
+    (i, { Id = i
+          HP = 200
+          Attack = 3
+          Location = l
+          Type = u }))
+  |> Map.ofSeq
 
-let isOpenTile (map:TileType[,]) (i, j) =
-  map.[i,j] = Open
-
-
-let rec explore current origin map frontier explored =
+let rec explore current map frontier explored units =
   let (i,j), dist = current
-  let (iO, jO) = origin
-  // printfn "exploring %A" current
 
   //up
   let frontier =
-    if i > 0 && isOpenTile map (i - 1,j) && not (Map.containsKey (i - 1, j) explored) then
-      // printfn "adding up to the frontier %A" (i - 1, j)
+    if i > 0 && isOpenTile map (i - 1,j) units && not (Map.containsKey (i - 1, j) explored) then
       Set.add ((i - 1, j), dist + 1) frontier
     else
       frontier
 
   //left
   let frontier =
-    if j > 0 && isOpenTile map (i, j - 1) && (not (Map.containsKey (i, j - 1) explored)) then
-      // printfn "adding left to the frontier %A " (i, j-1)
+    if j > 0 && isOpenTile map (i, j - 1) units && (not (Map.containsKey (i, j - 1) explored)) then
       Set.add ((i, j - 1), dist + 1) frontier
     else
       frontier
 
   //right
   let frontier =
-    if j < (Array2D.length2 map - 1) && isOpenTile map (i, j + 1) && not (Map.containsKey (i, j + 1) explored) then
-      // printfn "adding right to the frontier %A " (i, j+1)
+    if j < (Array2D.length2 map - 1) && isOpenTile map (i, j + 1) units && not (Map.containsKey (i, j + 1) explored) then
       Set.add ((i, j + 1), dist + 1) frontier
     else
       frontier
 
   //down
   let frontier =
-    if i < (Array2D.length1 map - 1) && isOpenTile map (i + 1, j) && not (Map.containsKey (i + 1, j) explored) then
-      // printfn "adding down to the frontier %A " (i + 1, j)
+    if i < (Array2D.length1 map - 1) && isOpenTile map (i + 1, j) units && not (Map.containsKey (i + 1, j) explored) then
       Set.add ((i + 1, j), dist + 1) frontier
     else
       frontier
@@ -112,89 +110,196 @@ let rec explore current origin map frontier explored =
   else
     let next = Set.toList frontier |> List.sortBy (fun (_, dist) -> dist) |> List.head
     let frontier = Set.remove next frontier
-    explore next origin map frontier explored
+    explore next map frontier explored units
 
-// TileType[,] -> int * int -> Map<int*int, dist>
-let distForTile (map:TileType[,]) (i, j) =
-  let explored = Map.empty //the distance to all tiles from this tile
-  let frontier = Set.empty //tile we need to explore
-  explore ((i, j), 0) (i, j) map frontier explored
+let distForTile (map:TileType[,]) (i, j) units =
+  let explored = Map.empty
+  let frontier = Set.empty
+  explore ((i, j), 0) map frontier explored units
 
-// genDistGrid :: map -> Map<int*int, Map<int*int, dist>>
-let genDistGrid (map:TileType[,]) =
-  let openTiles =
-    seq { for i in 0..(Array2D.length1 map - 1) do
-            for j in 0..(Array2D.length2 map - 1) do
-              if map.[i, j] = Open then
-                yield (i, j) }
+let getUnitAt loc units =
+  Map.tryPick (fun _ u -> if u.Location = loc then Some u else None) units
 
-  openTiles
-  |> Seq.fold (fun s (i, j) ->
-    let dft = distForTile map (i, j)
-    Map.add (i, j) dft s) Map.empty
-
-
-
-let sample1 =
-  [ "#######"
-    "#E..G.#"
-    "#...#.#"
-    "#.G.#G#"
-    "#######" ]
-
-let minReadingOrder t1 t2 =
-  match t1, t2 with
-  | (i1, j1), (i2, j2) when  i1 < i2 -> (i1, j1)
-  | (i1, j1), (i2, j2) when  i1 > i2 -> (i2, j2)
-  | (i1, j1), (i2, j2) when  i1 = i2 && j1 < j2 -> (i1, j1)
-  | (i1, j1), (i2, j2) when  i1 = i2 && j1 > j2 -> (i2, j2)
-  | t1, t2 when  t1 = t2 -> t1
-  | _ -> failwith "should not have made it here"
-
-let maxReadingOrder t1 t2 =
-  let minOrder = minReadingOrder t1 t2
-  if minOrder = t1 then t2 else t1
-
-let getInterTileDist t1 t2 distGrid =
-  let upperLeft = minReadingOrder t1 t2
-  let bottomRight = maxReadingOrder t1 t2
-  // printfn "intertile ul %A br %A" upperLeft bottomRight
-  Map.find upperLeft distGrid
-  |> Map.find  bottomRight
-
-let printDistGrid (map:TileType[,]) distGrid (i',j') =
+let printDistGrid (map:TileType[,]) distGrid units =
   let greekLowers = ['α'; 'β'; 'γ'; 'δ'; 'ε'; 'ζ'; 'η'; 'θ'; 'ι'; 'κ'; 'λ'; 'μ'; 'ν'; 'ξ'; 'ο'; 'π'; 'ρ'; 'σ'; 'τ'; 'υ'; 'φ'; 'χ'; 'ψ'; 'ω']
   let lowers = ['a' .. 'z'] @ greekLowers
   for i in 0..Array2D.length1 map - 1 do
     for j in 0..Array2D.length2 map - 1 do
-      if isOpenTile map (i,j) then
-        let dist = getInterTileDist (i,j) (i',j') distGrid
-        if dist < 10 then
+      let unitOpt = getUnitAt (i, j) units
+      if Option.isSome unitOpt then
+        match unitOpt with
+        | Some { Type = Goblin } -> printf "G"
+        | Some { Type = Elf } -> printf "E"
+        | _ -> failwith "should not have made it here"
+      elif isOpenTile map (i,j) units then
+        let distOpt = Map.tryFind (i, j) distGrid
+        match distOpt with
+        | Some dist when dist < 10 ->
           printf "%i" dist
-        else
+        | Some dist ->
           printf "%c" lowers.[dist]
-
+        | None -> printf "!"
       else
         printf "#"
     printfn ""
 
+let printLocations (map:TileType[,]) units =
+  for i in 0..Array2D.length1 map - 1 do
+    for j in 0..Array2D.length2 map - 1 do
+      let unitOpt = getUnitAt (i, j) units
+      if Option.isSome unitOpt then
+        match unitOpt with
+        | Some { Type = Goblin } -> printf "G"
+        | Some { Type = Elf } -> printf "E"
+        | _ -> failwith "should not have made it here"
+      elif isOpenTile map (i,j) units then
+        printf "."
+      else
+        printf "#"
+    printfn ""
+
+
+let chooseNextMove toDistGrid fromLocation closestDistance =
+  //find the locations around the fromLocation
+  let (i, j) = fromLocation
+  let paths =
+    Map.filter (fun l d ->
+    ( l = (i - 1, j) ||
+      l = (i + 1, j) ||
+      l = (i, j - 1) ||
+      l = (i, j + 1))) toDistGrid
+  |> Map.toList
+
+  let shortestPathLength =
+    paths
+    |> List.map (fun (_, d) -> d)
+    |> List.min
+
+  paths
+  |> List.filter (fun (_, d) -> d = shortestPathLength)
+  |> List.map (fun (l, _)  -> l)
+  |> List.min
+
+let neighbourTilesUnsafe (i,j) =
+  [ (i - 1, j)
+    (i + 1, j)
+    (i, j - 1)
+    (i, j + 1)]
+
+let hasEnemyNeighbour (u:Unit) units =
+  let neighbourTiles = neighbourTilesUnsafe u.Location
+  Map.exists (fun id u' ->
+    (u'.Type <> u.Type) &&
+    (List.exists (fun n -> n = u'.Location) neighbourTiles)) units
+
+let enemyNeighbours u units =
+  let neighbourTiles = neighbourTilesUnsafe u.Location
+  Map.filter (fun id u' ->
+    (u'.Type <> u.Type) &&
+    (List.exists (fun n -> n = u'.Location) neighbourTiles)) units
+  |> Map.toList
+  |> List.map (fun (_, en) -> en)
+
+let attack u units  =
+  if not (hasEnemyNeighbour u units) then
+    units
+  else
+    let target =
+      enemyNeighbours u units
+      |> List.minBy (fun en -> (en.HP, en.Location))
+
+    let target = { target with HP = target.HP - u.Attack }
+    if target.HP < 0 then
+      Map.remove target.Id units
+    else
+      Map.add target.Id target units
+
+
+let moveUnit (u:Unit) (units:Map<int, Unit>) map =
+  // printfn "ticking unit %i %A" u.Id u.Type
+  if hasEnemyNeighbour u units then
+    u
+  else
+    let inRangeTiles = inRangeTiles u map units
+    // printfn "in range tiles %A" inRangeTiles
+    let distGrid = distForTile map u.Location units
+    // printDistGrid map distGrid units
+    let reachable =
+      inRangeTiles
+      |> Seq.filter (fun t -> distGrid.ContainsKey t)
+      |> Seq.map(fun t -> (t, Map.find t distGrid))
+
+    // printfn "reachable %A" reachable
+    if Seq.isEmpty reachable then
+      u //no squares are reachable; skip turn
+    else
+      let closestDistance =
+        reachable
+        |> Seq.map (fun (_, d) -> d)
+        |> Seq.min
+
+      // printfn "closest dist %A" closestDistance
+      let targetLocation =
+        reachable
+        |> Seq.filter (fun (t, d) -> d = closestDistance)
+        |> Seq.map (fun (t, _) -> t)
+        |> Seq.sort
+        |> Seq.head
+
+      let targetDisGrid = distForTile map targetLocation units
+      let nextMove = chooseNextMove targetDisGrid u.Location closestDistance
+      { u with Location = nextMove }
+
 let printUnits units =
   units
-  |> Seq.iter (fun u -> printfn "%A" u)
+  |> Map.iter (fun _ u ->
+    printfn "%A%A hp:%A" u.Type u.Id u.HP)
 
-// let map = genMap sample1
+
+let rec tick units map iteration =
+  printfn "round %i" iteration
+  let (newState, map) =
+    Seq.sortBy (fun u -> u.Location) (units |> Map.toList |> List.map (fun (id, u) -> u))
+    |> Seq.map (fun u -> u.Id)
+    |> Seq.fold (fun (unitsState, map) uid ->
+      let uOpt = Map.tryFind uid unitsState
+      match uOpt with
+      | None -> (unitsState, map)
+      | Some u ->
+        // printfn "%A%A Go!" u.Type u.Id
+        let u = moveUnit u unitsState map
+        let unitsState = Map.add u.Id u unitsState
+        let unitsState = attack u unitsState
+        (unitsState, map)) (units, map)
+  //group count
+  let groupCount =
+    newState
+    |> Map.toList
+    |> List.groupBy (fun (id, u) -> u.Type)
+    |> List.length
+
+  let sum =
+    newState
+    |> Map.toList
+    |> List.sumBy (fun (id, u) -> u.HP)
+
+  if groupCount = 1 then
+    printfn "sim over after round %A with sum of hp = %A and solution =  %A" iteration sum (iteration * sum)
+    printLocations map newState
+    printUnits newState
+  else
+    printLocations map newState
+    printUnits newState
+    tick newState map (iteration + 1)
+
 
 let lines =
+  // System.IO.File.ReadLines("C:\Users\john\code\Aoc2018\Day15\inputSample6.txt")
   System.IO.File.ReadLines("C:\Users\john\code\Aoc2018\Day15\input.txt")
   |> List.ofSeq
 
 let units = genUnits lines
-printUnits units
 let map = genMap lines
+tick units map 0
 
-let distGrid = genDistGrid map
-printDistGrid map distGrid (30, 17)
-
-let firstUnit = units |> Seq.head
-let irt = inRangeTiles firstUnit distGrid units
 
