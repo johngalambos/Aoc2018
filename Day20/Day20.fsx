@@ -88,11 +88,18 @@ type Room (location) =
     else
       connections.Add(dest)
 
+  member r.Connections =
+    connections
+
+
 type ElfMap() =
   let rooms = new Dictionary<int*int, Room>()
 
   member m.AddRoom (room:Room) =
     rooms.Add(room.Location, room)
+
+  member g.Room location =
+    rooms.[location]
 
   member m.AddConnection src dest =
     let srcRoom =
@@ -116,18 +123,6 @@ type ElfMap() =
 
   member m.Print () =
 
-    //#####
-    //#.|.#
-    //#-#-#
-    //#.|.#
-    //#####
-    //for a map n rooms wide we need an extra two width for the border
-    //and n - 1 tiles for the doors
-    //same goes for height
-    //each tile is 1 + x
-    //walls are between rooms unless otherwise stated
-    //for each room check if there is a door to the right or down
-    // we'll print those
     let isEven n = (n % 2 = 0)
     let isOdd n =  not (isEven n)
     let xs = rooms.Keys |> Seq.map (fun (x, y) -> x)
@@ -145,17 +140,10 @@ type ElfMap() =
     let getIJ (x, y) =
       ((y + offsetY) * 2 - 1, (x + offsetX) * 2 - 1)
 
-      // a j of 0 should be the max Y coord
-      // max j should be the min Y coord
-      // -2 y should be an i of 10
-      // 2 y should be an i of 1
-      // minY should be i of 1
-
     let getXY (i, j) =
       let loc = ((j + 1) / 2 - 1 - offsetX),  -1 * (i + 1) / 2 + height + yMin
       // printfn "converting i,j (%i, %i) to x,y %A" i j loc
       loc
-
 
     printfn "xMin %i yMin %i xMax %i yMax %i width %i height %i gridWidth %i gridWidth %i" xMin yMin xMax yMax width height gridWidth gridHeight
     for i in 0..gridHeight - 1 do
@@ -181,11 +169,6 @@ type ElfMap() =
         | _ -> printf "#"
       printfn ""
 
-
-
-
-
-
 let getDest (x, y) direction =
   match direction with
   | 'N' -> (x, y + 1)
@@ -197,17 +180,16 @@ let getDest (x, y) direction =
 let rec walkRoomString (map:ElfMap) (x, y) = function
   | [] -> (x, y)
   | c::chars ->
-    printfn "walking %c from %A" c (x, y)
+    // printfn "walking %c from %A" c (x, y)
     let dest = getDest (x, y) c
     map.AddConnection (x, y) dest
     walkRoomString map dest chars
-
 
 let rec walkSegment segment startingPoint map =
     match segment with
     | SingleSegment dirs ->
         let endPoint = walkRoomString map startingPoint dirs
-        printfn "end point of single segment walk %A starting from %A was %A" dirs startingPoint endPoint
+        // printfn "end point of single segment walk %A starting from %A was %A" dirs startingPoint endPoint
         endPoint
     | ForkedSegment fs ->
         //walk the options in parallel from each starting point; their endpoints should be identical
@@ -218,7 +200,7 @@ let rec walkSegment segment startingPoint map =
             // printfn "end point of forked segment walk %A starting from %A was %A" fs startingPoint segEndPoint
             segEndPoint::acc) []
 
-        printfn "fs end points. Should be unique %A" nextStartingPoints
+        // printfn "fs end points. Should be unique %A" nextStartingPoints
         match fs.Type with
         | Mandatory -> List.head nextStartingPoints
         | Optional ->
@@ -228,9 +210,89 @@ let rec walkSegment segment startingPoint map =
             List.head nextStartingPoints
 
 and walkSegments segments startingPoint map =
-  printfn "walking a list of segments from starting points %A" startingPoint
+  // printfn "walking a list of segments from starting points %A" startingPoint
   let finalCoord =  segments |> Seq.fold (fun coord seg -> walkSegment seg coord map) startingPoint
   finalCoord
+
+type NodeState =
+  { location: int * int
+    pathCost: int }
+
+type Explored() =
+  let lookup = new Dictionary<int*int, NodeState>()
+
+  member e.Add node =
+    lookup.Add(node.location, node)
+
+  member e.ContainsLocation loc =
+    lookup.ContainsKey(loc)
+
+  member e.ToList () =
+    lookup.Values |> Seq.toList
+
+
+
+type Frontier(origin) =
+  let lookup = new Dictionary<int*int, NodeState>()
+  do lookup.Add(origin.location, origin)
+
+  member f.Pop() =
+    let next = lookup.Values |> Seq.sortBy (fun n -> n.pathCost) |> Seq.head
+    lookup.Remove (next.location) |> ignore
+    next
+
+  member f.ContainsLocation (loc) =
+    lookup.ContainsKey(loc)
+
+  member f.Add n =
+    lookup.Add (n.location, n)
+
+  member f.IsEmpty =
+    lookup.Count = 0
+
+  member f.ReplaceIfLowerCost n =
+    if lookup.ContainsKey(n.location) && lookup.[n.location].pathCost < n.pathCost then
+      printfn "replacing frontier item with a lower cost node"
+      lookup.Remove(n.location) |> ignore
+      lookup.Add(n.location, n)
+
+let rec traverseMap (map:ElfMap) (frontier:Frontier) (explored: Explored) iteration =
+  match frontier with
+  | _ when iteration > 1000000 -> 999
+  | _ when frontier.IsEmpty ->
+    //part1
+    // let lowestCostBynode =
+    //   explored.ToList()
+    //   |> List.groupBy (fun e -> e.location)
+    //   |> List.map (fun (l,es) -> (l, es |>  List.map (fun e -> e.pathCost) |> List.min))
+
+    // lowestCostBynode
+    // |> List.maxBy (fun (_, pathCost) -> pathCost)
+    // |> fun (_, pathCost) -> pathCost
+
+
+    //part2
+    explored.ToList()
+    |> List.filter(fun e -> e.pathCost >= 1000)
+    |> List.length
+
+
+  | _ ->
+    let current = frontier.Pop()
+    explored.Add(current)
+    printfn "exploring %A" current
+    let node = map.Room current.location
+    let newNodes = node.Connections |> Seq.map (fun c -> { location = c.Location; pathCost = current.pathCost + 1 })
+    for child in newNodes do
+      if not(explored.ContainsLocation child.location || frontier.ContainsLocation child.location) then
+        frontier.Add child
+      else
+        frontier.ReplaceIfLowerCost child
+    traverseMap map frontier explored (iteration + 1)
+
+
+
+
 
 
 // let input = "^ENWWW(NEEE|SSE(EE|N))$"
@@ -244,9 +306,12 @@ let parsed = parseSegments [] (input.ToCharArray() |> List.ofArray)
 let genMap parsed =
   let map = new ElfMap()
   let finalCooord = walkSegments parsed (0,0) map
-  printfn "final coord %A" finalCooord
+  // printfn "final coord %A" finalCooord
   map
 
+
 let map = genMap (parsed |> Seq.toList)
-map.Print()
+let origin = { location = (0, 0); pathCost = 0 }
+traverseMap map (new Frontier(origin)) (new Explored()) 0
+// map.Print()
 
