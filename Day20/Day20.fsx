@@ -3,31 +3,42 @@ open System.Collections.Generic
 
 type OptionType  =  Optional | Mandatory
 type Segment = SingleSegment of char list | ForkedSegment of SegmentOption
-and SegmentOption = { Options: Segment list ; Type: OptionType }
+and SegmentOption = { Options: Segment list list ; Type: OptionType }
 
 let toString chars =
   System.String(chars |> Array.ofList)
 
-let rec parseOptionsSegment (segChars, segList) = function
+let rec parseOptionsSegment (segChars, currentOptionSegments, allOptions) = function
   | '(' :: chars ->
     if segChars <> [] then
       let prevSeg = SingleSegment (segChars |> List.rev)
-      let childSegment, chars = parseOptionsSegment ([], []) chars
-      parseOptionsSegment ([], childSegment::prevSeg::segList) chars
+      let childSegment, chars = parseOptionsSegment ([], [], []) chars
+      parseOptionsSegment ([], childSegment::prevSeg::currentOptionSegments, allOptions) chars
     else
-      let childSegment, chars = parseOptionsSegment ([], []) chars
-      parseOptionsSegment ([], childSegment::segList) chars
+      let childSegment, chars = parseOptionsSegment ([], [], []) chars
+      parseOptionsSegment ([], childSegment::currentOptionSegments, allOptions) chars
   | '|'::')'::chars ->
-    let finalSeg = SingleSegment (segChars |> List.rev)
-    (ForkedSegment { Options = (finalSeg :: segList |> List.rev) ; Type = Optional }, chars)
+    if segChars <> [] then
+      let currentOption = SingleSegment (segChars |> List.rev) :: currentOptionSegments
+      let allOptions = currentOption :: allOptions |> List.rev
+      (ForkedSegment { Options = allOptions; Type = Optional }, chars)
+    else
+      (ForkedSegment { Options = currentOptionSegments::allOptions |> List.rev; Type = Optional }, chars)
   | '|'::chars ->
-    let prevSeg = SingleSegment (segChars |> List.rev)
-    parseOptionsSegment ([], (prevSeg::segList)) chars
+    //a single option can be a list of segments
+    let currentOption = SingleSegment (segChars |> List.rev) :: currentOptionSegments |> List.rev
+    parseOptionsSegment ([], [], (currentOption::allOptions)) chars
   | ')'::chars ->
-    let finalSeg = SingleSegment (segChars |> List.rev)
-    (ForkedSegment { Options = (finalSeg :: segList |> List.rev); Type = Mandatory }, chars)
+    if segChars <> [] then
+      let currentOption = SingleSegment (segChars |> List.rev) :: currentOptionSegments |> List.rev
+      let allOptions = currentOption :: allOptions |> List.rev
+      (ForkedSegment { Options = allOptions; Type = Mandatory }, chars)
+    else
+      let currentOption = currentOptionSegments |> List.rev
+      let allOptions = currentOption::allOptions |> List.rev
+      (ForkedSegment { Options = allOptions; Type = Mandatory }, chars)
   | c::chars->
-    parseOptionsSegment (c::segChars, segList) chars
+    parseOptionsSegment (c::segChars, currentOptionSegments,  allOptions) chars
   | [] -> failwith "unexpected end of input"
 
 let rec parseSegments acc chars = seq {
@@ -42,7 +53,7 @@ let rec parseSegments acc chars = seq {
     yield! emitCurrentSegment
   | '('::chars ->
     yield! emitCurrentSegment
-    let (segment, chars) = parseOptionsSegment ([],[]) chars
+    let (segment, chars) = parseOptionsSegment ([],[], []) chars
     yield segment
     yield! parseSegments [] chars
   | c::chars -> yield! parseSegments (c::acc) chars
@@ -138,8 +149,10 @@ type ElfMap() =
       // max j should be the min Y coord
       // -2 y should be an i of 10
       // 2 y should be an i of 1
+      // minY should be i of 1
+
     let getXY (i, j) =
-      let loc = ((j + 1) / 2 - 1 - offsetX),  ((i + 1) / 2  - 1 - offsetY) * -1
+      let loc = ((j + 1) / 2 - 1 - offsetX),  -1 * (i + 1) / 2 + height + yMin
       // printfn "converting i,j (%i, %i) to x,y %A" i j loc
       loc
 
@@ -201,8 +214,8 @@ let rec walkSegment segment startingPoint map =
         let nextStartingPoints =
           fs.Options
           |> Seq.fold (fun acc routeOption ->
-            let segEndPoint = walkSegment routeOption startingPoint map
-            printfn "end point of forked segment walk %A starting from %A was %A" fs startingPoint segEndPoint
+            let segEndPoint = walkSegments routeOption startingPoint map
+            // printfn "end point of forked segment walk %A starting from %A was %A" fs startingPoint segEndPoint
             segEndPoint::acc) []
 
         printfn "fs end points. Should be unique %A" nextStartingPoints
@@ -214,27 +227,25 @@ let rec walkSegment segment startingPoint map =
           else
             List.head nextStartingPoints
 
-let rec walkSegments segments startingPoint map =
-  // printfn "walking a list of segments from starting points %A" startingPoint
-  match segments with
-  | [] -> ()
-  | h::t ->
-    let nextStartingPoints = walkSegment h startingPoint map
-    walkSegments t nextStartingPoints map
+and walkSegments segments startingPoint map =
+  printfn "walking a list of segments from starting points %A" startingPoint
+  let finalCoord =  segments |> Seq.fold (fun coord seg -> walkSegment seg coord map) startingPoint
+  finalCoord
 
 
-let input = "^ENWWW(NEEE|SSE(EE|N))$"
+// let input = "^ENWWW(NEEE|SSE(EE|N))$"
 // let input = "^ESSWWN(E|NNENN(EESS(WNSE|)SSS|WWWSSSSE(SW|NNNE)))$"
+// let input = "^WSSEESWWWNW(S|NENNEEEENN(ESSSSW(NWSW|SSEN)|WSWWN(E|WWS(E|SS))))$"
 // let input = "^ENNWSWW(NEWS|)SSSEEN(WNSE|)EE(SWEN|)NNN$"
-// let input = System.IO.File.ReadAllText("C:\Users\john\code\Aoc2018\Day20\input.txt")
+let input = System.IO.File.ReadAllText("C:\Users\john\code\Aoc2018\Day20\input.txt")
 
 let parsed = parseSegments [] (input.ToCharArray() |> List.ofArray)
 
 let genMap parsed =
   let map = new ElfMap()
-  walkSegments parsed (0,0) map
+  let finalCooord = walkSegments parsed (0,0) map
+  printfn "final coord %A" finalCooord
   map
-
 
 let map = genMap (parsed |> Seq.toList)
 map.Print()
