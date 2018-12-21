@@ -1,58 +1,23 @@
 ﻿open System
 open System.Text.RegularExpressions
+open System.Collections.Generic
 
-type Tile = | Sand | Clay | Water | Spring
 type FloorCoords = { y: int; fromX: int; toX: int }
 type WallCoords = {x: int; fromY:int; toY: int }
 type Coords = Floor of FloorCoords | Wall of WallCoords
-
-type FrontierItem =
-  { node: int*int
-    stepCount: int
-    fork: int }
-
-type Frontier =
-  { contents: Map<int, FrontierItem list> }
-
-  member f.Next =
-    if Map.isEmpty f.contents then
-      None
-    else
-      let (fork, forkFrontier) =
-        f.contents
-        |> Map.toList
-        |> List.minBy (fun (fork, forkFrontier) ->
-          let head = forkFrontier |> List.head
-          head.stepCount)
-
-      // printfn  "frontier contains the following forks %A" (f.contents |> Map.toList |> List.map (fun (k, v) -> k))
-
-      match (fork, forkFrontier) with
-      | fork, h::[] ->
-        Some (h, { f with contents = Map.remove fork f.contents })
-      | fork, h::t ->
-        Some (h, { f with contents = Map.add fork t f.contents})
-      | _ -> failwith "should not hav gotten here"
-
-  member f.RemoveFork fork =
-    { f with contents = Map.remove fork f.contents }
-
-  member f.Add node fork stepCount =
-    match Map.containsKey fork f.contents with
-    | true ->
-      // printfn "adding to fork"
-      let newList = { node = node; stepCount = stepCount; fork=fork }::(Map.find fork f.contents)
-      { f with contents = Map.add fork newList f.contents }
-    | false ->
-      // printfn "creating a new fork for %A" fork
-      { f with contents = Map.add fork [{ node = node; stepCount = stepCount; fork=fork}] f.contents }
-
-  static member Init rootNode fork stepCount=
-    let f = { contents = Map.empty }
-    f.Add rootNode fork stepCount
-
 let wallRegex = new Regex("^x=(\d+),\s+y=(\d+)..(\d+)$")
 let floorRegex = new Regex("^y=(\d+),\s+x=(\d+)..(\d+)$")
+
+type Tile = Sand | Clay | Flowing | Pooled | Falling | Spring | Bounds
+
+type Action = Down | Left | Right
+
+type Node =
+  { location: (int * int)
+    parent: Node option
+    action: Action
+    fork: int
+    mutable state: Tile }
 
 let genMap input =
   let coords =
@@ -125,129 +90,224 @@ let genMap input =
   map.[0, 500-minX] <- Spring
   (map, minX)
 
-let printMap (map:Tile[,]) (explored: Set<int*int>) =
+let printMap (map:Tile[,]) =
   printfn "0123456789ABCDEF"
   for i in 0..Array2D.length1 map - 1 do
     for j in 0..Array2D.length2 map - 1 do
       match map.[i,j] with
       | Clay -> printf "#"
-      | Sand ->
-        if explored.Contains(i,j) then
-          printf "e"
-        else
-          printf "."
+      | Sand -> printf "."
+      | Flowing -> printf "-"
+      | Falling -> printf "|"
+      | Pooled -> printf "~"
       | Spring -> printf "+"
-      | _ -> printf "?"
+      | Bounds -> printf "*"
 
     printfn "  %A" i
 
-let printMapToFile (map:Tile[,]) (explored: Set<int*int>) path =
-  let lines = seq { for i in 0..Array2D.length1 map - 1 do
-                      let line =
-                        seq { for j in 0..Array2D.length2 map - 1 do
-                                yield match map.[i,j] with
-                                      | Clay -> sprintf "#"
-                                      | Sand ->
-                                        if explored.Contains(i,j) then
-                                          sprintf "~"
-                                        else
-                                          sprintf "."
-                                      | Spring -> sprintf "+"
-                                      | _ -> sprintf "?" }
-                        |> String.concat ""
-                      yield line }
-  lines
-  |> Seq.iter (fun l -> printfn "%s" l)
+let printMapToFile (map:Tile[,]) path =
+  let lines =
+    seq { for i in 0..Array2D.length1 map - 1 do
+            let line =
+              seq { for j in 0..Array2D.length2 map - 1 do
+                      yield
+                        match map.[i,j] with
+                        | Clay -> sprintf "#"
+                        | Sand -> sprintf "."
+                        | Flowing -> sprintf "-"
+                        | Falling -> sprintf "|"
+                        | Pooled -> sprintf "~"
+                        | Spring -> sprintf "+"
+                        | Bounds -> sprintf "*" }
+              |> String.concat ""
+            yield line }
 
   System.IO.File.WriteAllLines(path, lines)
 
-let CanExploreTwoRightFrom (i, j) (map: Tile[,]) (explored: Set<int*int>) =
-  // printfn "tworight: j %A length %A" j (Array2D.length2 map)
-  if j + 2 >= Array2D.length2 map - 1  then
-    false
-  else
-    match map.[i, j + 1], explored.Contains(i,j + 1), map.[i, j + 2], explored.Contains(i,j + 2) with
-    | Clay, _, _, _ -> false
-    | _, _, Sand, false -> true
-    | _ -> false
-
-let CanExplore (i, j) (map: Tile[,]) (explored: Set<int*int>) =
+let tileState (i, j) map =
   if i > Array2D.length1 map - 1 || j > Array2D.length2 map - 1 || i < 0 || j < 0 then
-    false
+    Bounds
   else
-    match map.[i, j], explored.Contains(i,j) with
-    | Sand, false -> true
-    | _ -> false
+    map.[i, j]
 
-let rec explore map explored (frontier:Frontier) stepNumber =
-  // printfn "frontier: %A" frontier
-  match frontier.Next with
-  | None -> explored
-  | Some ({ node=(i, j); fork=forkNumber}, frontier) ->
-    // printfn "exploring %A on fork %A step #%A" (i, j) forkNumber stepNumber
-    if i = Array2D.length1 map - 1 then
-      let explored = Set.add (i,j) explored
-      //remove the whole fork once we hit the bottom
-      let frontier = frontier.RemoveFork forkNumber
-      explore map explored frontier (stepNumber + 1)
-    else
-      let explored = Set.add (i,j) explored
+let rec boundsLeft (i,j) map  =
+  let left = tileState (i, j - 1) map
+  let leftDown = tileState (i + 1, j - 1) map
+  match (left, leftDown) with
+  | Clay, (Clay|Pooled)  -> Some (i, j - 1)
+  | _, (Sand|Falling|Flowing) -> None
+  | _ -> boundsLeft (i, j - 1) map
 
-      let right = (i, j + 1)
-      let left = (i, j - 1)
-      let down = (i + 1, j)
-      let twoRight = (i, j + 2)
-
-      let canGoRight = CanExplore right map explored
-      let canGoLeft = CanExplore left map explored
-      let canGoDown = CanExplore down map explored
-      let canGoTwoRight = CanExploreTwoRightFrom (i, j) map explored
-
-      //if we can't go down but can go either left or right, this is a fork
-      //give the left direction the same fork number as the parent but add a
-      //new one for the right direction
-      //frontier should be a map of lists by fork which we can update
-      //we should choose the list by the lowest
-      match canGoRight, canGoTwoRight, canGoLeft, canGoDown with
-      // | true, false, true, false ->
-      //   // printfn "Creating a new fork"
-      //   let frontier = frontier.Add right (forkNumber + 1) stepNumber
-      //   let frontier = frontier.Add left (forkNumber) stepNumber
-      //   explore map explored frontier (stepNumber + 1)
-      | false, true, true, false ->
-        // printfn "Creating a new overflow fork"
-        let frontier = frontier.Add twoRight (forkNumber + 1) stepNumber
-        let frontier = frontier.Add left (forkNumber) stepNumber
-        explore map explored frontier (stepNumber + 1)
-      | _  ->
-        let frontier = if canGoRight then frontier.Add right (forkNumber) stepNumber else frontier
-        let frontier = if canGoLeft then frontier.Add left (forkNumber) stepNumber else frontier
-        let frontier = if canGoDown then frontier.Add down (forkNumber) stepNumber else frontier
-        explore map explored frontier (stepNumber + 1)
+let rec boundsRight (i,j)  map =
+  let right = tileState (i, j + 1) map
+  let rightDown = tileState (i + 1, j + 1) map
+  match (right, rightDown) with
+  | Clay, (Clay|Pooled)  -> Some (i, j + 1)
+  | _, (Sand|Falling|Flowing) -> None
+  | _ -> boundsRight (i, j + 1) map
 
 
-let solve () =
-  printfn "starting"
-  let testInput = [
-    "x=495, y=2..7"
-    "y=7, x=495..501"
-    "x=501, y=3..7"
-    "x=498, y=2..4"
-    "x=506, y=1..2"
-    "x=498, y=10..13"
-    "x=504, y=10..13"
-    "y=13, x=498..504" ]
-  // let (map, minX) = genMap testInput
-  let input = System.IO.File.ReadLines("C:\Users\john\code\Aoc2018\Day17\input.txt")
-  let (map, minX) = genMap input
+let containedBounds (i,j) map =
+  (boundsLeft (i,j) map, boundsRight (i,j) map)
+  //
 
-  let frontier =  Frontier.Init (0, 500 - minX) 0 0
-  let explored = explore map Set.empty frontier  0
-  // printMapToFile map explored "C:\Users\john\code\Aoc2018\Day17\outputsample.txt"
-  printMapToFile map explored "C:\Users\john\code\Aoc2018\Day17\output.txt"
+let getNextFork =
+  let mutable count = 0
+  (fun () -> count <- count + 1; count)
 
-  // printMap map explored
-  printfn "explored tiles %A" explored.Count
+let getNextNodeId =
+  let mutable count = 0
+  (fun () -> count <- count + 1; count)
 
-solve ()
+let getIteration =
+  let mutable count = 0
+  (fun () -> count <- count + 1; count)
+
+let nodeLookup = new Dictionary<(int*int), Node>()
+
+
+let rec flowFrom node (map:Tile[,]) (nodeLookup: Dictionary<int*int, Node>) =
+  let iteration = getIteration ()
+  if (iteration > 1000000000) then
+    ()
+  else
+    let (i, j) = node.location
+    printfn "exploring node (%i, %i)" i j
+    map.[i,j] <- node.state
+    // printMap map
+    let right = (i, j + 1)
+    let left = (i, j - 1)
+    let down = (i + 1, j)
+
+    match (tileState down map), (tileState left map), (tileState right map), node.action with
+    | Bounds, _, _, _ -> ()
+    | Sand, _, _, _->
+      let downNode = { location = down; action = Down; fork=node.fork; parent = Some node; state=Falling }
+      nodeLookup.Add(downNode.location, downNode)
+      flowFrom downNode map nodeLookup
+    | (Flowing | Falling ), _, _, _ when node.action = Down && node.fork <> nodeLookup.[down].fork->
+      printfn "killing fork for whose work is done: %i " node.fork
+      ()
+    | _, Sand, Sand, _ ->
+      let leftNode = { location = left; action=Left; fork=node.fork; parent = Some node; state=Flowing  }
+      nodeLookup.Add(leftNode.location, leftNode)
+      flowFrom leftNode map nodeLookup
+      // if the node is still sand after the left side rruns, run the right side
+      if tileState right map = Sand then
+        let rightNode = { location = right; action=Right; fork=getNextFork(); parent = Some node; state=Flowing }
+        printfn "Executing fork %i starting at %A action %A" rightNode.fork  right rightNode.action
+        nodeLookup.Add(rightNode.location, rightNode)
+        flowFrom rightNode map nodeLookup
+      else
+        ()
+    | _, Sand, _, _ ->
+      let leftNode = { location = left; action=Left; fork=node.fork; parent = Some node; state=Flowing }
+      nodeLookup.Add(leftNode.location, leftNode)
+      flowFrom leftNode map nodeLookup
+    | _, _, Sand, _ ->
+      printfn "flowing right"
+      let rightNode = { location = right; action=Right; fork=node.fork; parent = Some node; state=Flowing }
+      // printfn "creating fork %i"  rightNode.fork
+      nodeLookup.Add(rightNode.location, rightNode)
+      flowFrom rightNode map nodeLookup
+    | _, (Clay|Flowing), _, Left ->
+        printfn "rewinding from blocked left (%i, %i) fork:%i" i j node.fork
+        //only set it to pooled if it's bound to the  right as well
+        // if isBoundedRight (i,j) map then
+        //   node.state <- Pooled
+        //   map.[i,j] <- Pooled
+        match node.parent with
+        | Some p when p.fork <> node.fork -> printfn "rewound into a parent fork. dying"
+        | Some p -> flowFrom p map nodeLookup
+        | None -> ()
+    | _, _, (Clay|Flowing), Right ->
+        printfn "rewinding from blocked right (%i, %i) fork:%i" i j node.fork
+        // if isBoundedLeft (i,j) map then
+        //   node.state <- Pooled
+        //   map.[i,j] <- Pooled
+        match node.parent with
+        | Some p when p.fork <> node.fork -> printfn "rewound into a parent fork. dying"
+        | Some p -> flowFrom p map nodeLookup
+        | None -> ()
+    | _ ->
+      printfn "rewinding up"
+      //don't ever back up to a parent on a different fork
+      //confirm pooling when backing UP out of a node
+
+      match node.action, node.parent with
+      | _, Some p when p.fork <> node.fork ->
+        printfn "this child fork has rewound to parent. Killing it %i" node.fork
+        ()
+      | Down, Some p when p.fork = node.fork ->
+        match containedBounds node.location map with
+        | (Some (iLeft, jLeft), Some (iRight, jRight)) ->
+          printfn " this level was pooled between bounds %A %A" (iLeft, jLeft) (iRight, jRight)
+          for jPooled in (jLeft + 1)..(jRight - 1) do
+            let nodeToTag = nodeLookup.[i, jPooled]
+            nodeToTag.state <- Pooled
+            map.[i, jPooled] <- Pooled
+          flowFrom p map nodeLookup
+        | _ ->
+          printfn "simple rewing for action  %A and parent fork %A"  node.action node.parent.Value.fork
+          flowFrom p map nodeLookup
+      | _ -> printfn "must have been a parent node on a different fork node action %A (%i,%i)" node.action i j
+
+printfn "starting"
+// let testInput = [
+//   "x=495, y=2..7"
+//   "y=7, x=495..501"
+//   "x=501, y=3..7"
+//   "x=498, y=2..4"
+//   "x=506, y=1..2"
+//   "x=498, y=10..13"
+//   "x=504, y=10..13"
+//   "y=13, x=498..504" ]
+
+let testInput = [
+  "x=495, y=3..7"
+  "y=7, x=495..501"
+  "x=500, y=3..7"
+  "x=498, y=3..4"
+  "x=506, y=1..2"
+  "x=498, y=10..13"
+  "x=504, y=10..13"
+  "y=13, x=498..504" ]
+
+
+// let (map, minX) = genMap testInput
+// let rootNode = { location = (0, 500 - minX); action = Down; fork=getNextFork(); parent = None; state = Falling }
+// nodeLookup.Add(rootNode.location, rootNode)
+// flowFrom rootNode map nodeLookup
+// printMap map
+
+
+
+let input = System.IO.File.ReadLines("C:\Users\john\code\Aoc2018\Day17\input.txt")
+let (map, minX) = genMap input
+let rootNode = { location = (0, 500 - minX); action = Down; fork=getNextFork(); parent = None; state = Falling }
+nodeLookup.Add(rootNode.location, rootNode)
+flowFrom rootNode map nodeLookup
+printMapToFile map "C:\Users\john\code\Aoc2018\Day17\output.txt"
+
+let result =
+  seq { for i in 0..Array2D.length1 map - 1 do
+          for j in 0..Array2D.length2 map - 1 do
+            yield map.[i,j] }
+  |> Seq.filter(fun t ->
+    match t with
+    | (Flowing|Pooled|Falling) -> true
+    | _ -> false)
+  |> Seq.length
+
+
+
+let result2 =
+  seq { for i in 0..Array2D.length1 map - 1 do
+          for j in 0..Array2D.length2 map - 1 do
+            yield map.[i,j] }
+  |> Seq.filter(fun t ->
+    match t with
+    | (Pooled) -> true
+    | _ -> false)
+  |> Seq.length
 
